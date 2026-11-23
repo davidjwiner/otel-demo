@@ -5,6 +5,8 @@ import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentation
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import { NodeSDK } from "@opentelemetry/sdk-node";
+import { BatchSpanProcessor } from "@opentelemetry/sdk-trace";
+import { UserSpanProcessor, userAttributes, userFromCookie } from "./user.mjs";
 
 const sdk = new NodeSDK({
   serviceName: process.env.OTEL_SERVICE_NAME ?? "render-app",
@@ -16,12 +18,17 @@ const sdk = new NodeSDK({
     "vcs.ref.head.revision": process.env.RENDER_GIT_COMMIT ?? "local",
   }),
   // Reads OTEL_EXPORTER_OTLP_TRACES_ENDPOINT / OTEL_EXPORTER_OTLP_HEADERS.
-  traceExporter: new OTLPTraceExporter(),
+  spanProcessors: [new UserSpanProcessor(), new BatchSpanProcessor({ exporter: new OTLPTraceExporter() })],
   instrumentations: [
     getNodeAutoInstrumentations({
       // Don't trace the span-forwarding endpoint or static assets.
       "@opentelemetry/instrumentation-http": {
         ignoreIncomingRequestHook: (req) => /^\/(otel\/|app\.js|favicon\.ico)/.test(req.url ?? ""),
+        // Server-side identity on the root span, at the start of the request.
+        requestHook: (span, req) => {
+          const user = req.headers ? userFromCookie(req.headers.cookie) : null;
+          if (user) span.setAttributes(userAttributes(user));
+        },
       },
       "@opentelemetry/instrumentation-fs": { enabled: false },
       "@opentelemetry/instrumentation-dns": { enabled: false },

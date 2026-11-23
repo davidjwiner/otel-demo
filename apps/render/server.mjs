@@ -3,6 +3,7 @@ import express from "express";
 import { context, propagation, trace } from "@opentelemetry/api";
 import { suppressTracing } from "@opentelemetry/core";
 import { migrate, pool } from "./db.mjs";
+import { COOKIE, randomUser, userAttributes, userFromCookie, withUserBaggage } from "./user.mjs";
 import { runWorker } from "./worker.mjs";
 
 const SINK = process.env.SINK_SITE;
@@ -11,7 +12,13 @@ const app = express();
 const indexHtml = readFileSync(new URL("./public/index.html", import.meta.url), "utf8");
 
 // Page: inject the current server span as <meta name="traceparent">.
-app.get("/", (_req, res) => {
+app.get("/", (req, res) => {
+  // "Sign in": give new browsers a dummy user via a session cookie.
+  if (!userFromCookie(req.headers.cookie)) {
+    const user = randomUser();
+    res.cookie(COOKIE, user.id, { httpOnly: true, sameSite: "lax", path: "/" });
+    trace.getActiveSpan()?.setAttributes(userAttributes(user));
+  }
   const carrier = {};
   propagation.inject(context.active(), carrier);
   res.type("html").send(indexHtml.replace("{{traceparent}}", carrier.traceparent ?? ""));
@@ -48,6 +55,14 @@ app.post("/otel/v1/traces", express.raw({ type: () => true, limit: "5mb" }), (re
 
 app.use(express.json());
 
+// "Auth" middleware: resolve the user server-side and run the rest of the
+// request with the user in OTel baggage (child spans + background job).
+app.use((req, res, next) => {
+  const user = userFromCookie(req.headers.cookie) ?? { id: "user_anonymous", email: "anonymous@example.com" };
+  req.user = user;
+  context.with(withUserBaggage(context.active(), user), next);
+});
+
 app.get("/orders/:id", async (req, res) => {
   const { rows } = await pool.query("SELECT id, status FROM orders WHERE id = $1", [Number(req.params.id)]);
   if (!rows[0]) return res.status(404).send("not found");
@@ -80,16 +95,19 @@ app.post("/orders", async (req, res) => {
   // Enqueue with trace context in the row.
   const carrier = {};
   propagation.inject(context.active(), carrier);
-  await pool.query("INSERT INTO jobs (kind, order_id, traceparent, tracestate) VALUES ('fulfill', $1, $2, $3)", [
+  // carrier now holds traceparent and baggage (the user), so the worker gets both.
+  await pool.query("INSERT INTO jobs (kind, order_id, traceparent, tracestate, baggage) VALUES ('fulfill', $1, $2, $3, $4)", [
     orderId,
     carrier.traceparent ?? null,
     carrier.tracestate ?? null,
+    carrier.baggage ?? null,
   ]);
 
   res.json({
     orderId,
     payment: pay.status,
     traceId: trace.getActiveSpan()?.spanContext().traceId,
+    user: req.user,
     incomingTraceparent: req.headers.traceparent ?? null,
   });
 });
