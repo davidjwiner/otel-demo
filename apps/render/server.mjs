@@ -24,8 +24,12 @@ const sinkUrl = process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
 const sinkHeaders = Object.fromEntries(
   (process.env.OTEL_EXPORTER_OTLP_HEADERS ?? "")
     .split(",")
-    .filter(Boolean)
-    .map((kv) => kv.split("=").map((x) => decodeURIComponent(x.trim()))),
+    // OTel's format is key=value pairs; skip anything malformed.
+    .filter((kv) => kv.includes("="))
+    .map((kv) => {
+      const i = kv.indexOf("=");
+      return [kv.slice(0, i), kv.slice(i + 1)].map((x) => decodeURIComponent(x.trim()));
+    }),
 );
 app.post("/otel/v1/traces", express.raw({ type: () => true, limit: "5mb" }), (req, res) => {
   context.with(suppressTracing(context.active()), async () => {
