@@ -1,73 +1,14 @@
-import { readFileSync } from "node:fs";
 import express from "express";
 import { context, propagation, trace } from "@opentelemetry/api";
-import { suppressTracing } from "@opentelemetry/core";
 import { migrate, pool } from "./db.mjs";
-import { COOKIE, randomUser, userAttributes, userFromCookie, withUserBaggage } from "./user.mjs";
 import { runWorker } from "./worker.mjs";
 
 const SINK = process.env.SINK_SITE;
 const tracer = trace.getTracer("otel-demo-render");
 const app = express();
-const indexHtml = readFileSync(new URL("./public/index.html", import.meta.url), "utf8");
-
-// Page: inject the current server span as <meta name="traceparent">.
-app.get("/", (req, res) => {
-  // "Sign in": give new browsers a dummy user via a session cookie.
-  if (!userFromCookie(req.headers.cookie)) {
-    const user = randomUser();
-    res.cookie(COOKIE, user.id, { httpOnly: true, sameSite: "lax", path: "/" });
-    trace.getActiveSpan()?.setAttributes(userAttributes(user));
-  }
-  const carrier = {};
-  propagation.inject(context.active(), carrier);
-  res.type("html").send(indexHtml.replace("{{traceparent}}", carrier.traceparent ?? ""));
-});
-app.use(express.static(new URL("./public", import.meta.url).pathname, { index: false }));
-
-// Browser spans -> sink. Same-origin, so no CORS and no token in the browser.
-// Tracing is suppressed so forwarding spans doesn't create more spans.
-const sinkUrl = process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
-const sinkHeaders = Object.fromEntries(
-  (process.env.OTEL_EXPORTER_OTLP_HEADERS ?? "")
-    .split(",")
-    // OTel's format is key=value pairs; skip anything malformed.
-    .filter((kv) => kv.includes("="))
-    .map((kv) => {
-      const i = kv.indexOf("=");
-      return [kv.slice(0, i), kv.slice(i + 1)].map((x) => decodeURIComponent(x.trim()));
-    }),
-);
-app.post("/otel/v1/traces", express.raw({ type: () => true, limit: "5mb" }), (req, res) => {
-  context.with(suppressTracing(context.active()), async () => {
-    try {
-      const r = await fetch(sinkUrl, {
-        method: "POST",
-        headers: { "content-type": req.headers["content-type"] ?? "application/json", ...sinkHeaders },
-        body: req.body,
-      });
-      res.status(r.status).send(await r.text());
-    } catch (e) {
-      res.status(502).send(String(e));
-    }
-  });
-});
-
 app.use(express.json());
 
-// "Auth" middleware: resolve the user server-side and run the rest of the
-// request with the user in OTel baggage (child spans + background job).
-app.use((req, res, next) => {
-  const user = userFromCookie(req.headers.cookie) ?? { id: "user_anonymous", email: "anonymous@example.com" };
-  req.user = user;
-  context.with(withUserBaggage(context.active(), user), next);
-});
-
-app.get("/orders/:id", async (req, res) => {
-  const { rows } = await pool.query("SELECT id, status FROM orders WHERE id = $1", [Number(req.params.id)]);
-  if (!rows[0]) return res.status(404).send("not found");
-  res.json(rows[0]);
-});
+app.get("/", (_req, res) => res.send("otel-demo render app"));
 
 app.post("/orders", async (req, res) => {
   const { item = "widget", qty = 1 } = req.body ?? {};
@@ -95,19 +36,16 @@ app.post("/orders", async (req, res) => {
   // Enqueue with trace context in the row.
   const carrier = {};
   propagation.inject(context.active(), carrier);
-  // carrier now holds traceparent and baggage (the user), so the worker gets both.
-  await pool.query("INSERT INTO jobs (kind, order_id, traceparent, tracestate, baggage) VALUES ('fulfill', $1, $2, $3, $4)", [
+  await pool.query("INSERT INTO jobs (kind, order_id, traceparent, tracestate) VALUES ('fulfill', $1, $2, $3)", [
     orderId,
     carrier.traceparent ?? null,
     carrier.tracestate ?? null,
-    carrier.baggage ?? null,
   ]);
 
   res.json({
     orderId,
     payment: pay.status,
     traceId: trace.getActiveSpan()?.spanContext().traceId,
-    user: req.user,
     incomingTraceparent: req.headers.traceparent ?? null,
   });
 });

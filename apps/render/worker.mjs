@@ -19,7 +19,7 @@ async function takeJob() {
 }
 
 async function fulfill(job) {
-  const parent = propagation.extract(ROOT_CONTEXT, { traceparent: job.traceparent ?? "", tracestate: job.tracestate ?? "", baggage: job.baggage ?? "" });
+  const parent = propagation.extract(ROOT_CONTEXT, { traceparent: job.traceparent ?? "", tracestate: job.tracestate ?? "" });
   await context.with(parent, () =>
     tracer.startActiveSpan(
       "fulfill order",

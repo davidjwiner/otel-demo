@@ -1,7 +1,6 @@
 import { after } from "next/server";
 import { SpanKind, SpanStatusCode, trace } from "@opentelemetry/api";
 import { migrate, pool } from "@/lib/db";
-import { withUser } from "@/lib/user";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,11 +8,7 @@ export const dynamic = "force-dynamic";
 const tracer = trace.getTracer("otel-demo-vercel");
 const SINK = process.env.SINK_SITE!;
 
-export function POST(req: Request) {
-  return withUser(req, (user) => createOrder(req, user));
-}
-
-async function createOrder(req: Request, user: { id: string; email: string }) {
+export async function POST(req: Request) {
   const { item = "widget", qty = 1 } = await req.json().catch(() => ({}));
   await migrate();
   const db = pool();
@@ -56,7 +51,6 @@ async function createOrder(req: Request, user: { id: string; email: string }) {
     orderId,
     payment: pay.status,
     traceId: trace.getActiveSpan()?.spanContext().traceId,
-    user,
     incomingTraceparent: req.headers.get("traceparent"),
   });
 }

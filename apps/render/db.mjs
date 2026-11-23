@@ -14,7 +14,6 @@ export async function migrate() {
       id serial PRIMARY KEY, kind text NOT NULL, order_id int NOT NULL,
       traceparent text, tracestate text, created_at timestamptz DEFAULT now(), taken_at timestamptz
     );
-    ALTER TABLE jobs ADD COLUMN IF NOT EXISTS baggage text;
     INSERT INTO inventory VALUES ('widget', 1000000), ('gadget', 1000000), ('gizmo', 1000000)
       ON CONFLICT (item) DO NOTHING;
   `);

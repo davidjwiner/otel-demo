@@ -38,53 +38,9 @@ render.yaml      Render Blueprint (free web service + free Postgres)
 | Vercel app | `convex-dev/otel-demo-vercel` at https://otel-demo-vercel.previews.convex.dev, behind Deployment Protection (use `vercel curl`). Trace Drain `drn_piiAziIaIcJdCKXP`, scoped to this project. Tracing sampling is set to production 100%. |
 | Render app | https://otel-demo-render.onrender.com with Postgres `otel-demo-db` (free). The Vercel app shares this database. |
 
-## Frontend ↔ backend tracing
-
-Both the Vercel and Render apps serve a page with a **Place order** button. One click produces one trace:
-
-```
-ui: place order                      (browser, root span: click → order settled)
-├─ HTTP POST /orders                 (browser fetch span; injects traceparent)
-│  └─ [Vercel edge spans]            (Vercel only: Resolve Deployment/Route/Cache, Route across regions, Invoke Function)
-│     └─ POST /orders                (server) → pg spans → payment fetch → background job → LLM fetch → pg
-├─ HTTP GET /orders/:id              (status poll #1) → server → pg
-└─ HTTP GET /orders/:id              (status poll #n …)
-```
-
-Page loads are traced too. The server writes its current span into `<meta name="traceparent">`, and the browser's `documentLoad` span joins the server render trace.
-
-| Piece | Vercel | Render |
-| --- | --- | --- |
-| Browser SDK setup | `apps/vercel/instrumentation-client.ts` (Next.js runs it before hydration) | `apps/render/web/src/main.js`, bundled to `public/app.js` with `npm run build` in `web/` |
-| Click span + polling | `apps/vercel/app/order-demo.tsx` | `apps/render/web/src/main.js` |
-| `<meta name="traceparent">` | `experimental.clientTraceMetadata` in `next.config.ts` | `server.mjs` fills it in on `GET /` |
-| Browser span export | `/otel/v1/traces` → `next.config.ts` rewrite to the sink (no function runs, token stays server-side) | `/otel/v1/traces` → `server.mjs` forwards to the sink, with tracing suppressed |
-
-Browsers have no async context, just like the Convex runtime without a context manager. So the click handler captures its span and re-enters it with `context.with(ctx, () => fetch(...))` for each request.
-
-Run it in a real browser by opening either app and clicking the button. To run it headless:
-
-```bash
-cd sink
-node scripts/browser.mjs https://otel-demo-render.onrender.com
-BYPASS_HEADER="x-vercel-protection-bypass: $(cat ../.context/vercel-bypass.txt)" \
-  node scripts/browser.mjs https://otel-demo-vercel.previews.convex.dev --wait 50
-```
-
 ## User identity on spans
 
-Both servers assign each browser a dummy user through a `demo_session` cookie (`user_1001`/`ada@example.com`, …). This stands in for a real session or JWT lookup. Server spans get `user.id` and `user.email`:
-
-| | Vercel | Render |
-| --- | --- | --- |
-| Assign the session | `proxy.ts` | `GET /` in `server.mjs` |
-| Root server span | `attributesFromHeaders` in `registerOTel` (only works when deployed) | http instrumentation `requestHook` in `instrumentation.mjs` |
-| Child spans | `withUser()` in `lib/user.ts` puts `user.id` in OTel baggage, and `UserSpanProcessor` copies it onto every new span | same pattern, in `user.mjs` + an auth middleware in `server.mjs` |
-| Background job | `after()` keeps the context, so the job gets it for free | `baggage` is stored on the job row next to `traceparent` and extracted by the worker |
-
-Only `user.id` travels in baggage, and the email is looked up on the server. Baggage is forwarded on outbound HTTP calls: Render's Node SDK sends it to every host, and `@vercel/otel` sends it to the hosts in `propagateContextUrls`. The fake API logs `baggage: user.id=…`, which shows it happening. Vercel's platform spans (edge, Invoke Function) can't carry app-level identity.
-
-In Jaeger, filter with Tags = `user.id=user_1002`.
+Both apps stamp a hard-coded demo user (`user.id = user_1001`, `user.email = ada@example.com`) on every server span through a small span processor: `apps/vercel/lib/demo-user.ts` and `apps/render/demo-user.mjs`. A real app would set these per request from its session. In Jaeger, filter with Tags = `user.id=user_1001`.
 
 ## Running it
 

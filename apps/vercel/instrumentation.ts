@@ -9,8 +9,8 @@ export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
     const { BatchSpanProcessor } = await import("@opentelemetry/sdk-trace-base");
     const { PgInstrumentation } = await import("@opentelemetry/instrumentation-pg");
-    const { UserSpanProcessor, userAttributes, userFromCookie } = await import("./lib/user");
-    processors.push(new UserSpanProcessor());
+    const { DemoUserSpanProcessor } = await import("./lib/demo-user");
+    processors.push(new DemoUserSpanProcessor());
     // Optional direct export to our sink, for Hobby teams without Trace Drains.
     if (process.env.SINK_SITE && process.env.DIRECT_EXPORT !== "0") {
       processors.push(
@@ -25,12 +25,6 @@ export async function register() {
     registerOTel({
       serviceName: "vercel-app",
       spanProcessors: processors,
-      // Server-side identity on the root span, computed from request headers.
-      attributesFromHeaders: (headers, getter) => {
-        const raw = getter.get(headers, "cookie");
-        const user = userFromCookie(Array.isArray(raw) ? raw.join("; ") : raw);
-        return user ? userAttributes(user) : undefined;
-      },
       instrumentations: ["fetch", new PgInstrumentation()],
       // Only send traceparent to hosts we own (the default is opt-in).
       instrumentationConfig: { fetch: { propagateContextUrls: [/\.convex\.site/] } },
