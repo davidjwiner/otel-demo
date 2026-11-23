@@ -63,7 +63,16 @@ http.route({
   path: "/v1/traces",
   method: "POST",
   handler: httpAction(async (ctx, req) => {
-    if (!authorized(req)) return new Response("unauthorized", { status: 401 });
+    if (!authorized(req)) {
+      // Record rejected exports so misconfigured senders are visible.
+      const h = pickHeaders(req);
+      await ctx.runMutation(internal.ingest.createBatch, {
+        source: "otlp", contentType: h["content-type"], userAgent: h["user-agent"],
+        headers: JSON.stringify({ ...h, authorizationPresent: req.headers.has("authorization") }),
+        spanCount: 0, eventCount: 0, note: "rejected: bad or missing token",
+      });
+      return new Response("unauthorized", { status: 401 });
+    }
     const contentType = req.headers.get("content-type") ?? "";
     const raw = await readBody(req);
     const rawId = await ctx.storage.store(new Blob([raw], { type: contentType }));

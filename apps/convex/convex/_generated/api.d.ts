@@ -13,6 +13,7 @@ import type * as lib_consoleSpan from "../lib/consoleSpan.js";
 import type * as lib_otel from "../lib/otel.js";
 import type * as orders from "../orders.js";
 import type * as probe from "../probe.js";
+import type * as probeContext from "../probeContext.js";
 
 import type {
   ApiFromModules,
@@ -26,6 +27,7 @@ declare const fullApi: ApiFromModules<{
   "lib/otel": typeof lib_otel;
   orders: typeof orders;
   probe: typeof probe;
+  probeContext: typeof probeContext;
 }>;
 
 /**

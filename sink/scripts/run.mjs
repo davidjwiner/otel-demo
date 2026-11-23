@@ -3,7 +3,25 @@
 // print the resulting trace from the sink.
 //
 //   node scripts/run.mjs convex-plain convex-traced vercel render [--n 3] [--wait 20]
-import { newIds, postSpan, printTrace, q, SINK_SITE } from "./lib.mjs";
+import { execFileSync } from "node:child_process";
+import { newIds, postSpan, printTrace, q } from "./lib.mjs";
+
+// For Vercel deployments behind Deployment Protection, set VERCEL_SCOPE and
+// VERCEL_CWD (a linked project dir) and requests go through `vercel curl`.
+async function post(t, url, traceparent, body) {
+  if (t === "vercel" && process.env.VERCEL_SCOPE) {
+    const out = execFileSync(
+      "vercel",
+      ["curl", url, "--scope", process.env.VERCEL_SCOPE, "--", "-s", "-w", "\\n%{http_code}", "-X", "POST",
+        "-H", "content-type: application/json", "-H", `traceparent: ${traceparent}`, "--data", JSON.stringify(body)],
+      { cwd: process.env.VERCEL_CWD, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+    ).trim();
+    const i = out.lastIndexOf("\n");
+    const text = out.slice(0, i);
+    return { status: Number(out.slice(i + 1)), json: async () => JSON.parse(text), text: async () => text };
+  }
+  return fetch(url, { method: "POST", headers: { "content-type": "application/json", traceparent }, body: JSON.stringify(body) });
+}
 
 const TARGETS = {
   "convex-plain": process.env.CONVEX_APP_SITE && `${process.env.CONVEX_APP_SITE}/orders`,
@@ -31,11 +49,7 @@ for (const t of targets) {
   for (let i = 0; i < n; i++) {
     const { traceId, spanId } = newIds();
     const startMs = Date.now();
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json", traceparent: `00-${traceId}-${spanId}-01` },
-      body: JSON.stringify({ item: "widget", qty: 1 }),
-    });
+    const res = await post(t, url, `00-${traceId}-${spanId}-01`, { item: "widget", qty: 1 });
     const endMs = Date.now();
     const body = await res.json().catch(async () => ({ text: await res.text() }));
     await postSpan({
