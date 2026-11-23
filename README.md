@@ -71,6 +71,21 @@ BYPASS_HEADER="x-vercel-protection-bypass: $(cat ../.context/vercel-bypass.txt)"
   node scripts/browser.mjs https://otel-demo-vercel.previews.convex.dev --wait 50
 ```
 
+## User identity on spans
+
+Both servers assign each browser a dummy user through a `demo_session` cookie (`user_1001`/`ada@example.com`, …). This stands in for a real session or JWT lookup. Server spans get `user.id` and `user.email`:
+
+| | Vercel | Render |
+| --- | --- | --- |
+| Assign the session | `proxy.ts` | `GET /` in `server.mjs` |
+| Root server span | `attributesFromHeaders` in `registerOTel` (only works when deployed) | http instrumentation `requestHook` in `instrumentation.mjs` |
+| Child spans | `withUser()` in `lib/user.ts` puts `user.id` in OTel baggage, and `UserSpanProcessor` copies it onto every new span | same pattern, in `user.mjs` + an auth middleware in `server.mjs` |
+| Background job | `after()` keeps the context, so the job gets it for free | `baggage` is stored on the job row next to `traceparent` and extracted by the worker |
+
+Only `user.id` travels in baggage, and the email is looked up on the server. Baggage is forwarded on outbound HTTP calls: Render's Node SDK sends it to every host, and `@vercel/otel` sends it to the hosts in `propagateContextUrls`. The fake API logs `baggage: user.id=…`, which shows it happening. Vercel's platform spans (edge, Invoke Function) can't carry app-level identity.
+
+In Jaeger, filter with Tags = `user.id=user_1002`.
+
 ## Running it
 
 ```bash
