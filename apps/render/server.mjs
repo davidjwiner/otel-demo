@@ -1,14 +1,54 @@
+import { readFileSync } from "node:fs";
 import express from "express";
 import { context, propagation, trace } from "@opentelemetry/api";
+import { suppressTracing } from "@opentelemetry/core";
 import { migrate, pool } from "./db.mjs";
 import { runWorker } from "./worker.mjs";
 
 const SINK = process.env.SINK_SITE;
 const tracer = trace.getTracer("otel-demo-render");
 const app = express();
+const indexHtml = readFileSync(new URL("./public/index.html", import.meta.url), "utf8");
+
+// Page: inject the current server span as <meta name="traceparent">.
+app.get("/", (_req, res) => {
+  const carrier = {};
+  propagation.inject(context.active(), carrier);
+  res.type("html").send(indexHtml.replace("{{traceparent}}", carrier.traceparent ?? ""));
+});
+app.use(express.static(new URL("./public", import.meta.url).pathname, { index: false }));
+
+// Browser spans -> sink. Same-origin, so no CORS and no token in the browser.
+// Tracing is suppressed so forwarding spans doesn't create more spans.
+const sinkUrl = process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
+const sinkHeaders = Object.fromEntries(
+  (process.env.OTEL_EXPORTER_OTLP_HEADERS ?? "")
+    .split(",")
+    .filter(Boolean)
+    .map((kv) => kv.split("=").map((x) => decodeURIComponent(x.trim()))),
+);
+app.post("/otel/v1/traces", express.raw({ type: () => true, limit: "5mb" }), (req, res) => {
+  context.with(suppressTracing(context.active()), async () => {
+    try {
+      const r = await fetch(sinkUrl, {
+        method: "POST",
+        headers: { "content-type": req.headers["content-type"] ?? "application/json", ...sinkHeaders },
+        body: req.body,
+      });
+      res.status(r.status).send(await r.text());
+    } catch (e) {
+      res.status(502).send(String(e));
+    }
+  });
+});
+
 app.use(express.json());
 
-app.get("/", (_req, res) => res.send("otel-demo render app"));
+app.get("/orders/:id", async (req, res) => {
+  const { rows } = await pool.query("SELECT id, status FROM orders WHERE id = $1", [Number(req.params.id)]);
+  if (!rows[0]) return res.status(404).send("not found");
+  res.json(rows[0]);
+});
 
 app.post("/orders", async (req, res) => {
   const { item = "widget", qty = 1 } = req.body ?? {};

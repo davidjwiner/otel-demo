@@ -19,6 +19,10 @@ const sdk = new NodeSDK({
   traceExporter: new OTLPTraceExporter(),
   instrumentations: [
     getNodeAutoInstrumentations({
+      // Don't trace the span-forwarding endpoint or static assets.
+      "@opentelemetry/instrumentation-http": {
+        ignoreIncomingRequestHook: (req) => /^\/(otel\/|app\.js|favicon\.ico)/.test(req.url ?? ""),
+      },
       "@opentelemetry/instrumentation-fs": { enabled: false },
       "@opentelemetry/instrumentation-dns": { enabled: false },
       "@opentelemetry/instrumentation-net": { enabled: false },
