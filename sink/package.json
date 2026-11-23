@@ -1,0 +1,16 @@
+{
+  "name": "otel-sink",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "convex deploy -y",
+    "dev": "convex dev"
+  },
+  "dependencies": {
+    "convex": "^1.51.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^5.6.0"
+  }
+}

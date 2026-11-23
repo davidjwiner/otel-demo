@@ -1,0 +1,22 @@
+{
+  "name": "otel-demo-convex",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "convex dev",
+    "deploy": "convex deploy -y"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/core": "2.7.1",
+    "@opentelemetry/exporter-trace-otlp-http": "0.218.0",
+    "@opentelemetry/resources": "2.7.1",
+    "@opentelemetry/sdk-trace-base": "2.7.1",
+    "@opentelemetry/semantic-conventions": "^1.30.0",
+    "convex": "^1.51.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}
