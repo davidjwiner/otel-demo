@@ -1,0 +1,26 @@
+# Render Blueprint: web service (with in-process worker) + Postgres.
+# Set SINK_SITE and OTEL_EXPORTER_OTLP_HEADERS in the dashboard when prompted.
+services:
+  - type: web
+    name: otel-demo-render
+    runtime: node
+    rootDir: apps/render
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    envVars:
+      - key: OTEL_SERVICE_NAME
+        value: render-app
+      - key: SINK_SITE
+        sync: false
+      - key: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+        sync: false
+      - key: OTEL_EXPORTER_OTLP_HEADERS
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: otel-demo-db
+          property: connectionString
+databases:
+  - name: otel-demo-db
+    plan: free
