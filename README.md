@@ -55,6 +55,7 @@ VERCEL_URL=https://otel-demo-vercel.previews.convex.dev VERCEL_SCOPE=convex-dev 
 node scripts/trace.mjs recent                 # list recent traces
 node scripts/trace.mjs <traceId> --attrs      # waterfall with every exported attribute
 
+./scripts/vercel-trace.sh                     # one Vercel trace, no client span (Vercel's edge is the root)
 ./scripts/jaeger.sh &                         # local Jaeger UI at http://localhost:16686
 node scripts/to-jaeger.mjs --minutes 120      # replay sink spans into it
 ```
